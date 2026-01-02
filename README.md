@@ -1,2 +1,1 @@
-Client Library:
-https://docs.tdengine.com/tdengine-reference/client-libraries/
+https://docs.tdengine.com/tdengine-reference/client-libraries/rest-api/
