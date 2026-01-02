@@ -1,8 +1,8 @@
 import paho.mqtt.client as mqtt
 import time
 import re
-import taos
-from taos import connect
+import requests
+from requests.auth import HTTPBasicAuth
 
 # MQTT broker settings
 BROKER_ADDRESS = "localhost"
@@ -13,9 +13,8 @@ TOPICS = [
     "factory/oee/quality"
 ]
 
-# TDengine connection settings
-TDENGINE_HOST = "localhost"
-TDENGINE_PORT = 6030
+# TDengine REST API settings
+TDENGINE_REST_URL = "http://localhost:6041/rest/sql/datadb"  # RESTful API URL with database name included
 TDENGINE_USER = "root"
 TDENGINE_PASSWORD = "taosdata"
 TDENGINE_DB = "datadb"
@@ -29,34 +28,45 @@ def on_connect(client, userdata, flags, rc):
     else:
         print(f"Failed to connect, return code {rc}")
 
+def insert_data_rest(sql):
+    try:
+        headers = {
+            "Content-Type": "text/plain"
+        }
+        print(f"Sending SQL to TDengine REST API: {sql}")
+        response = requests.post(
+            TDENGINE_REST_URL,
+            data=sql,
+            headers=headers,
+            auth=HTTPBasicAuth(TDENGINE_USER, TDENGINE_PASSWORD)
+        )
+        print(f"REST API response status: {response.status_code}, response text: {response.text}")
+        if response.status_code == 200:
+            print(f"Successfully inserted data with SQL: {sql}")
+        else:
+            print(f"Failed to insert data. Status code: {response.status_code}, Response: {response.text}")
+    except Exception as e:
+        print(f"Exception during REST API call: {e}")
+
+import json
+
 def on_message(client, userdata, msg):
     timestamp = int(time.time() * 1000)  # milliseconds since epoch
     payload_str = msg.payload.decode()
-    # Extract numerical value from payload string
-    match = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", payload_str)
-    if match:
-        value = float(match.group(0))
-    else:
-        print("No numerical value found in payload")
+    try:
+        payload_json = json.loads(payload_str)
+        value = float(payload_json.get("value"))
+        print(value)
+    except (json.JSONDecodeError, TypeError, ValueError) as e:
+        print(f"Failed to parse JSON or extract 'value': {e}")
         return
 
     tag = msg.topic
     table_name = tag.replace('/', '_')
 
-    try:
-        # Connect to TDengine
-        conn = connect(host=TDENGINE_HOST, user=TDENGINE_USER, password=TDENGINE_PASSWORD, database=TDENGINE_DB, port=TDENGINE_PORT)
-        cursor = conn.cursor()
-
-        # Insert data into TDengine table
-        sql = f"INSERT INTO {table_name} USING factorydata TAGS ('{tag}') VALUES ({timestamp}, {value})"
-        cursor.execute(sql)
-        conn.commit()
-        cursor.close()
-        conn.close()
-        print(f"Inserted data into TDengine: timestamp={timestamp}, tag={tag}, value={value}")
-    except Exception as e:
-        print(f"Failed to insert data into TDengine: {e}")
+    # Construct SQL insert statement for REST API without database name (since it's in URL)
+    sql = f"INSERT INTO {table_name} USING factorydata TAGS ('{tag}') VALUES ({timestamp}, {value})"
+    insert_data_rest(sql)
 
 def main():
     client = mqtt.Client()
